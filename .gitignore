@@ -1,0 +1,22 @@
+# SSH keys
+*.pem
+*.pub
+id_rsa
+id_rsa.pub
+yes
+yes.pub
+
+# Environment files
+.env
+.env.*
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
