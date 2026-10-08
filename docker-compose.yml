@@ -1,4 +1,4 @@
-version: '3.9'
+
 
 services:
 
@@ -22,7 +22,7 @@ services:
     ports:
       - "5000:5000"
     env_file:
-      - ./server/.env
+      - ./backend/.env
     depends_on:
       - mongo
     networks:
