@@ -129,39 +129,83 @@ pipeline {
             }
         }
 
-        stage('Deploy to Kubernetes') {
+                stage('Deploy to Kubernetes') {
             steps {
-                sh '''
-                    set -e
+                script {
+                    try {
+                        sh '''
+                            set -e
 
-                    export KUBECONFIG=/var/lib/jenkins/.kube/config
+                            export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    echo "Updating frontend image..."
+                            echo "Updating frontend image..."
 
-                    kubectl set image deployment/client \
-                      client=$FRONTEND_IMAGE:999 \
-                      -n $KUBE_NAMESPACE
+                            kubectl set image deployment/client \
+                              client=$FRONTEND_IMAGE:$BUILD_NUMBER \
+                              -n $KUBE_NAMESPACE
 
-                    echo "Updating backend image..."
+                            echo "Updating backend image..."
 
-                    kubectl set image deployment/server \
-                      server=$BACKEND_IMAGE:$BUILD_NUMBER \
-                      -n $KUBE_NAMESPACE
+                            kubectl set image deployment/server \
+                              server=$BACKEND_IMAGE:$BUILD_NUMBER \
+                              -n $KUBE_NAMESPACE
 
-                    echo "Waiting for backend rollout..."
+                            echo "Waiting for backend rollout..."
 
-                    kubectl rollout status deployment/server \
-                      -n $KUBE_NAMESPACE \
-                      --timeout=180s
+                            kubectl rollout status deployment/server \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
 
-                    echo "Waiting for frontend rollout..."
+                            echo "Waiting for frontend rollout..."
 
-                    kubectl rollout status deployment/client \
-                      -n $KUBE_NAMESPACE \
-                      --timeout=180s
-                '''
+                            kubectl rollout status deployment/client \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
+                        '''
+
+                    } catch (Exception e) {
+
+                        echo "========================================="
+                        echo "DEPLOYMENT FAILED"
+                        echo "STARTING AUTOMATIC ROLLBACK"
+                        echo "========================================="
+
+                        sh '''
+                            export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                            echo "Rolling back frontend..."
+
+                            kubectl rollout undo deployment/client \
+                              -n $KUBE_NAMESPACE
+
+                            echo "Rolling back backend..."
+
+                            kubectl rollout undo deployment/server \
+                              -n $KUBE_NAMESPACE
+
+                            echo "Waiting for frontend rollback..."
+
+                            kubectl rollout status deployment/client \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
+
+                            echo "Waiting for backend rollback..."
+
+                            kubectl rollout status deployment/server \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
+
+                            echo "========================================="
+                            echo "AUTOMATIC ROLLBACK COMPLETED"
+                            echo "========================================="
+                        '''
+
+                        error("Deployment failed. Automatic rollback completed.")
+                    }
+                }
             }
         }
+    
 
         stage('Verify Deployment') {
             steps {
