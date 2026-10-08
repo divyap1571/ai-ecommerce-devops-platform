@@ -1,0 +1,66 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_PROFILE = 'default'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform init -input=false'
+                }
+            }
+        }
+
+        stage('Terraform Validate') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform validate'
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform plan -input=false -out=tfplan'
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform apply -input=false -auto-approve tfplan'
+                }
+            }
+        }
+
+        stage('Terraform Output') {
+            steps {
+                dir('terraform') {
+                    sh 'terraform output'
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Terraform infrastructure pipeline completed successfully.'
+        }
+
+        failure {
+            echo 'Terraform infrastructure pipeline failed.'
+        }
+    }
+}
