@@ -84,6 +84,44 @@ pipeline {
             }
         }
 
+
+
+
+stage('Security Scan - Trivy') {
+    steps {
+        sh '''
+            set -e
+
+            echo "========================================="
+            echo "TRIVY SECURITY SCAN - FRONTEND"
+            echo "========================================="
+
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              --no-progress \
+              $FRONTEND_IMAGE:$BUILD_NUMBER
+
+            echo "========================================="
+            echo "TRIVY SECURITY SCAN - BACKEND"
+            echo "========================================="
+
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              --no-progress \
+              $BACKEND_IMAGE:$BUILD_NUMBER
+
+            echo "========================================="
+            echo "SECURITY SCAN PASSED"
+            echo "========================================="
+        '''
+    }
+}
+
+
+
+
         stage('Docker Login & Push') {
             steps {
                 withCredentials([
