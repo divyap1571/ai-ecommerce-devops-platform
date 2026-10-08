@@ -64,18 +64,21 @@ pipeline {
                     set -e
 
                     echo "Building frontend image..."
+
                     docker build \
                       -t $FRONTEND_IMAGE:$BUILD_NUMBER \
                       -t $FRONTEND_IMAGE:latest \
                       ./frontend
 
                     echo "Building backend image..."
+
                     docker build \
                       -t $BACKEND_IMAGE:$BUILD_NUMBER \
                       -t $BACKEND_IMAGE:latest \
                       ./backend
 
                     echo "Docker images created:"
+
                     docker images | grep "divyap1571/mern-app"
                 '''
             }
@@ -90,6 +93,7 @@ pipeline {
                         passwordVariable: 'DOCKER_PASSWORD'
                     )
                 ]) {
+
                     sh '''
                         set -e
 
@@ -115,7 +119,11 @@ pipeline {
                     export KUBECONFIG=/var/lib/jenkins/.kube/config
 
                     kubectl config use-context $KUBE_CONTEXT
+
+                    echo "=== Kubernetes Nodes ==="
                     kubectl get nodes
+
+                    echo "=== Application Namespace ==="
                     kubectl get namespace $KUBE_NAMESPACE
                 '''
             }
@@ -129,21 +137,25 @@ pipeline {
                     export KUBECONFIG=/var/lib/jenkins/.kube/config
 
                     echo "Updating frontend image..."
+
                     kubectl set image deployment/client \
                       client=$FRONTEND_IMAGE:$BUILD_NUMBER \
                       -n $KUBE_NAMESPACE
 
                     echo "Updating backend image..."
+
                     kubectl set image deployment/server \
                       server=$BACKEND_IMAGE:$BUILD_NUMBER \
                       -n $KUBE_NAMESPACE
 
                     echo "Waiting for backend rollout..."
+
                     kubectl rollout status deployment/server \
                       -n $KUBE_NAMESPACE \
                       --timeout=180s
 
                     echo "Waiting for frontend rollout..."
+
                     kubectl rollout status deployment/client \
                       -n $KUBE_NAMESPACE \
                       --timeout=180s
@@ -153,29 +165,106 @@ pipeline {
 
         stage('Verify Deployment') {
             steps {
-                sh '''
-                    set -e
+                script {
 
-                    export KUBECONFIG=/var/lib/jenkins/.kube/config
+                    try {
 
-                    echo "=== Pods ==="
-                    kubectl get pods -n $KUBE_NAMESPACE
+                        sh '''
+                            set -e
 
-                    echo "=== Services ==="
-                    kubectl get svc -n $KUBE_NAMESPACE
+                            export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    echo "=== Deployment Status ==="
-                    kubectl get deployments -n $KUBE_NAMESPACE
+                            echo "================================="
+                            echo "PODS"
+                            echo "================================="
 
-                    echo "=== Backend Health ==="
-                    kubectl run pipeline-health-check \
-                      -n $KUBE_NAMESPACE \
-                      --rm \
-                      -i \
-                      --restart=Never \
-                      --image=curlimages/curl \
-                      -- curl -f http://server-service:5000/api/health
-                '''
+                            kubectl get pods -n $KUBE_NAMESPACE
+
+                            echo "================================="
+                            echo "SERVICES"
+                            echo "================================="
+
+                            kubectl get svc -n $KUBE_NAMESPACE
+
+                            echo "================================="
+                            echo "DEPLOYMENTS"
+                            echo "================================="
+
+                            kubectl get deployments -n $KUBE_NAMESPACE
+
+                            echo "================================="
+                            echo "BACKEND HEALTH CHECK"
+                            echo "================================="
+
+                            kubectl run pipeline-health-check-$BUILD_NUMBER \
+                              -n $KUBE_NAMESPACE \
+                              --rm \
+                              -i \
+                              --restart=Never \
+                              --image=curlimages/curl \
+                              -- curl -f http://server-service:5000/api/health
+
+                            echo "================================="
+                            echo "DEPLOYMENT VERIFICATION SUCCESS"
+                            echo "================================="
+                        '''
+
+                    } catch (Exception e) {
+
+                        echo "================================="
+                        echo "DEPLOYMENT VERIFICATION FAILED"
+                        echo "STARTING AUTOMATIC ROLLBACK"
+                        echo "================================="
+
+                        sh '''
+                            export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                            echo "Rolling back frontend..."
+
+                            kubectl rollout undo deployment/client \
+                              -n $KUBE_NAMESPACE
+
+                            echo "Rolling back backend..."
+
+                            kubectl rollout undo deployment/server \
+                              -n $KUBE_NAMESPACE
+
+                            echo "Waiting for frontend rollback..."
+
+                            kubectl rollout status deployment/client \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
+
+                            echo "Waiting for backend rollback..."
+
+                            kubectl rollout status deployment/server \
+                              -n $KUBE_NAMESPACE \
+                              --timeout=180s
+
+                            echo "================================="
+                            echo "ROLLBACK COMPLETED"
+                            echo "================================="
+
+                            echo "Current frontend image:"
+
+                            kubectl get deployment client \
+                              -n $KUBE_NAMESPACE \
+                              -o=jsonpath='{.spec.template.spec.containers[0].image}'
+
+                            echo
+
+                            echo "Current backend image:"
+
+                            kubectl get deployment server \
+                              -n $KUBE_NAMESPACE \
+                              -o=jsonpath='{.spec.template.spec.containers[0].image}'
+
+                            echo
+                        '''
+
+                        error("Deployment failed. Automatic rollback completed.")
+                    }
+                }
             }
         }
     }
@@ -183,16 +272,20 @@ pipeline {
     post {
 
         success {
-            echo '========================================='
-            echo 'CI/CD PIPELINE COMPLETED SUCCESSFULLY!'
-            echo '========================================='
+            echo '''
+            =========================================
+            CI/CD PIPELINE COMPLETED SUCCESSFULLY!
+            =========================================
+            '''
         }
 
         failure {
-            echo '========================================='
-            echo 'PIPELINE FAILED'
-            echo 'Check the failed stage and Jenkins console output.'
-            echo '========================================='
+            echo '''
+            =========================================
+            PIPELINE FAILED
+            =========================================
+            Check the failed stage and rollback status.
+            '''
         }
 
         always {
