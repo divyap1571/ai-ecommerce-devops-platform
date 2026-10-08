@@ -139,7 +139,7 @@ pipeline {
                     echo "Updating frontend image..."
 
                     kubectl set image deployment/client \
-                      client=$FRONTEND_IMAGE:$BUILD_NUMBER \
+                      client=$FRONTEND_IMAGE:999 \
                       -n $KUBE_NAMESPACE
 
                     echo "Updating backend image..."
