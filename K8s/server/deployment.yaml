@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: server
-          image: nikhilesh2701/mern-app-backend:latest
+          image: divyap1571/mern-app-backend:latest
           ports:
             - containerPort: 5000
           env:

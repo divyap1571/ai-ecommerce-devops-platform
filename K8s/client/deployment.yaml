@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: client
-          image: nikhilesh2701/mern-app-frontend:latest
+          image: divyap1571/mern-app-frontend:latest
           ports:
             - containerPort: 80
           resources:

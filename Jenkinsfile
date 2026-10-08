@@ -2,44 +2,47 @@ pipeline {
     agent any
 
     tools {
-        nodejs 'NodeJS 24.14.1'
+        nodejs 'NodeJS-20'
     }
 
     environment {
-        MONGO_URI      = credentials('mongo-uri')
-        DOCKERHUB_CRED = credentials('dockerhub-credentials')
-        IMAGE_NAME     = 'nikhilesh2701/mern-app'
+        FRONTEND_IMAGE = 'divyap1571/mern-app-frontend'
+        BACKEND_IMAGE  = 'divyap1571/mern-app-backend'
+        KUBE_CONTEXT   = 'kind-my-cluster'
+        KUBE_NAMESPACE = 'mern-app'
     }
 
     stages {
 
         stage('Checkout') {
             steps {
-                echo 'Cloning repository...'
+                echo 'Checking out source code...'
                 checkout scm
             }
         }
 
         stage('Install Dependencies') {
             parallel {
-                stage('frontend deps') {
+
+                stage('Frontend Dependencies') {
                     steps {
                         dir('frontend') {
                             sh 'npm ci'
                         }
                     }
                 }
-                stage('backend deps') {
+
+                stage('Backend Dependencies') {
                     steps {
                         dir('backend') {
-                            sh 'npm ci'
+                            sh 'npm ci --omit=dev'
                         }
                     }
                 }
             }
         }
 
-        stage('Lint frontend') {
+        stage('Lint Frontend') {
             steps {
                 dir('frontend') {
                     sh 'npm run lint -- --max-warnings 100'
@@ -47,7 +50,7 @@ pipeline {
             }
         }
 
-        stage('Build React App') {
+        stage('Build React Application') {
             steps {
                 dir('frontend') {
                     sh 'npm run build'
@@ -58,28 +61,62 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 sh '''
-                    docker build -t $IMAGE_NAME-frontend:$BUILD_NUMBER ./frontend
-                    docker build -t $IMAGE_NAME-backend:$BUILD_NUMBER -f backend/Dockerfile .
+                    set -e
+
+                    echo "Building frontend image..."
+                    docker build \
+                      -t $FRONTEND_IMAGE:$BUILD_NUMBER \
+                      -t $FRONTEND_IMAGE:latest \
+                      ./frontend
+
+                    echo "Building backend image..."
+                    docker build \
+                      -t $BACKEND_IMAGE:$BUILD_NUMBER \
+                      -t $BACKEND_IMAGE:latest \
+                      ./backend
+
+                    echo "Docker images created:"
+                    docker images | grep "divyap1571/mern-app"
                 '''
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Docker Login & Push') {
             steps {
-                sh '''
-                    echo $DOCKERHUB_CRED_PSW | docker login -u $DOCKERHUB_CRED_USR --password-stdin
-                    docker push $IMAGE_NAME-frontend:$BUILD_NUMBER
-                    docker push $IMAGE_NAME-backend:$BUILD_NUMBER
-                '''
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+                ]) {
+                    sh '''
+                        set -e
+
+                        echo "$DOCKER_PASSWORD" | docker login \
+                          -u "$DOCKER_USERNAME" \
+                          --password-stdin
+
+                        docker push $FRONTEND_IMAGE:$BUILD_NUMBER
+                        docker push $FRONTEND_IMAGE:latest
+
+                        docker push $BACKEND_IMAGE:$BUILD_NUMBER
+                        docker push $BACKEND_IMAGE:latest
+                    '''
+                }
             }
         }
 
-        stage('Setup Kubeconfig') {
+        stage('Kubernetes Pre-Check') {
             steps {
                 sh '''
-                    mkdir -p /var/jenkins_home/.kube
-                    cp /home/ec2-user/.kube/config-flat /var/jenkins_home/.kube/config
-                    chown -R jenkins:jenkins /var/jenkins_home/.kube
+                    set -e
+
+                    export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                    kubectl config use-context $KUBE_CONTEXT
+                    kubectl get nodes
+                    kubectl get namespace $KUBE_NAMESPACE
                 '''
             }
         }
@@ -87,31 +124,79 @@ pipeline {
         stage('Deploy to Kubernetes') {
             steps {
                 sh '''
-                    sed -i "s|$IMAGE_NAME-frontend:latest|$IMAGE_NAME-frontend:$BUILD_NUMBER|g" K8s/client/deployment.yaml
-                    sed -i "s|$IMAGE_NAME-backend:latest|$IMAGE_NAME-backend:$BUILD_NUMBER|g" K8s/server/deployment.yaml
+                    set -e
 
-                    kubectl apply -f K8s/namespace.yaml
-                    kubectl apply -f K8s/secrets.yaml
-                    kubectl apply -f K8s/mongo/
-                    kubectl apply -f K8s/server/
-                    kubectl apply -f K8s/client/
+                    export KUBECONFIG=/var/lib/jenkins/.kube/config
 
-                    kubectl rollout status deployment/server -n mern-app
-                    kubectl rollout status deployment/client -n mern-app
+                    echo "Updating frontend image..."
+                    kubectl set image deployment/client \
+                      client=$FRONTEND_IMAGE:$BUILD_NUMBER \
+                      -n $KUBE_NAMESPACE
+
+                    echo "Updating backend image..."
+                    kubectl set image deployment/server \
+                      server=$BACKEND_IMAGE:$BUILD_NUMBER \
+                      -n $KUBE_NAMESPACE
+
+                    echo "Waiting for backend rollout..."
+                    kubectl rollout status deployment/server \
+                      -n $KUBE_NAMESPACE \
+                      --timeout=180s
+
+                    echo "Waiting for frontend rollout..."
+                    kubectl rollout status deployment/client \
+                      -n $KUBE_NAMESPACE \
+                      --timeout=180s
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                sh '''
+                    set -e
+
+                    export KUBECONFIG=/var/lib/jenkins/.kube/config
+
+                    echo "=== Pods ==="
+                    kubectl get pods -n $KUBE_NAMESPACE
+
+                    echo "=== Services ==="
+                    kubectl get svc -n $KUBE_NAMESPACE
+
+                    echo "=== Deployment Status ==="
+                    kubectl get deployments -n $KUBE_NAMESPACE
+
+                    echo "=== Backend Health ==="
+                    kubectl run pipeline-health-check \
+                      -n $KUBE_NAMESPACE \
+                      --rm \
+                      -i \
+                      --restart=Never \
+                      --image=curlimages/curl \
+                      -- curl -f http://server-service:5000/api/health
                 '''
             }
         }
     }
 
     post {
+
         success {
-            echo 'Pipeline completed successfully!'
+            echo '========================================='
+            echo 'CI/CD PIPELINE COMPLETED SUCCESSFULLY!'
+            echo '========================================='
         }
+
         failure {
-            echo 'Pipeline failed. Check logs above.'
+            echo '========================================='
+            echo 'PIPELINE FAILED'
+            echo 'Check the failed stage and Jenkins console output.'
+            echo '========================================='
         }
+
         always {
-            sh 'docker logout'
+            sh 'docker logout || true'
         }
     }
 }
