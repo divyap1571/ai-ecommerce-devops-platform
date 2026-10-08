@@ -135,6 +135,42 @@ stage('Security Scan - Trivy') {
 
 
 
+
+stage('Secret Scan - Trivy') {
+    steps {
+        sh '''
+            set +e
+
+            echo "========================================="
+            echo "TRIVY SECRET SCAN"
+            echo "========================================="
+
+            trivy fs \
+              --scanners secret \
+              --no-progress \
+              .
+
+            SCAN_STATUS=$?
+
+            echo "========================================="
+            echo "SECRET SCAN COMPLETED"
+            echo "Trivy exit code: $SCAN_STATUS"
+            echo "========================================="
+
+            exit 0
+        '''
+    }
+}
+
+
+
+
+
+
+
+
+
+
         stage('Docker Login & Push') {
             steps {
                 withCredentials([
