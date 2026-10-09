@@ -1,22 +1,49 @@
+
 pipeline {
     agent any
 
     environment {
-        AWS_PROFILE = 'default'
+        AWS_DEFAULT_REGION = 'ap-south-1'
+        AWS_REGION = 'ap-south-1'
+        TF_IN_AUTOMATION = 'true'
     }
 
     stages {
-
         stage('Checkout') {
             steps {
                 checkout scm
             }
         }
 
+        stage('Verify Tools') {
+            steps {
+                sh '''
+                    terraform -version
+                    aws --version
+                '''
+            }
+        }
+
+        stage('Verify AWS Credentials') {
+            steps {
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    sh 'aws sts get-caller-identity'
+                }
+            }
+        }
+
         stage('Terraform Init') {
             steps {
-                dir('terraform') {
-                    sh 'terraform init -input=false'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    dir('terraform') {
+                        sh 'terraform init -input=false'
+                    }
                 }
             }
         }
@@ -31,24 +58,39 @@ pipeline {
 
         stage('Terraform Plan') {
             steps {
-                dir('terraform') {
-                    sh 'terraform plan -input=false -out=tfplan'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    dir('terraform') {
+                        sh 'terraform plan -input=false -out=tfplan'
+                    }
                 }
             }
         }
 
         stage('Terraform Apply') {
             steps {
-                dir('terraform') {
-                    sh 'terraform apply -input=false -auto-approve tfplan'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    dir('terraform') {
+                        sh 'terraform apply -input=false -auto-approve tfplan'
+                    }
                 }
             }
         }
 
         stage('Terraform Output') {
             steps {
-                dir('terraform') {
-                    sh 'terraform output'
+                withCredentials([[
+                    $class: 'AmazonWebServicesCredentialsBinding',
+                    credentialsId: 'aws-credentials'
+                ]]) {
+                    dir('terraform') {
+                        sh 'terraform output'
+                    }
                 }
             }
         }
@@ -60,7 +102,7 @@ pipeline {
         }
 
         failure {
-            echo 'Terraform infrastructure pipeline failed.'
+            echo 'Terraform infrastructure pipeline failed. Check the console log.'
         }
     }
 }
